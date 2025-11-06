@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Porovnání - Trimble Connect Extension</title>
+    <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/2.2.1/trimble-connect-workspace-api.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+        }
+
+        #tc-status {
+            background: #0066cc;
+            color: white;
+            padding: 10px 20px;
+            font-size: 14px;
+            display: none;
+        }
+
+        #tc-status.show {
+            display: block;
+        }
+
+        #tc-status.error {
+            background: #e74c3c;
+        }
+
+        #tc-status.success {
+            background: #27ae60;
+        }
+
+        #app-frame {
+            width: 100%;
+            height: calc(100vh - 40px);
+            border: none;
+            display: none;
+        }
+
+        #app-frame.show {
+            display: block;
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            color: #7f8c8d;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #0066cc;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-container {
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 30px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .error-container h2 {
+            color: #e74c3c;
+            margin-bottom: 15px;
+        }
+
+        .error-container p {
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+
+        .error-container code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div id="tc-status"></div>
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <div>Připojuji k Trimble Connect...</div>
+    </div>
+    <iframe id="app-frame" src=""></iframe>
+
+    <script>
+        // Globální proměnné
+        let tcAPI = null;
+        let currentApp = 'drawings'; // 'drawings' nebo 'documents'
+
+        // Status zprávy
+        function showStatus(message, type = 'info') {
+            const status = document.getElementById('tc-status');
+            status.textContent = message;
+            status.className = 'show ' + type;
+            
+            if (type !== 'error') {
+                setTimeout(() => {
+                    status.className = '';
+                }, 3000);
+            }
+        }
+
+        // Skrytí loading
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        // Zobrazení iframe
+        function showApp(appType) {
+            currentApp = appType;
+            const frame = document.getElementById('app-frame');
+            
+            if (appType === 'drawings') {
+                frame.src = 'https://geodetmasna.github.io/pdf-compare/vykresy.html';
+            } else {
+                frame.src = 'https://geodetmasna.github.io/pdf-compare/dokumenty.html';
+            }
+            
+            frame.className = 'show';
+            document.getElementById('tc-status').style.display = 'block';
+        }
+
+        // Zpracování TC událostí
+        function handleTCEvent(event, args) {
+            console.log('TC Event:', event, args);
+            
+            switch (event) {
+                case "extension.command":
+                    handleCommand(args.data);
+                    break;
+                case "extension.accessToken":
+                    console.log('Access token received');
+                    break;
+                case "extension.userSettingsChanged":
+                    console.log('User settings changed');
+                    break;
+                default:
+                    console.log('Unknown event:', event);
+            }
+        }
+
+        // Zpracování příkazů z menu
+        function handleCommand(command) {
+            console.log('Command:', command);
+            
+            switch (command) {
+                case "compare_drawings":
+                    tcAPI.ui.setActiveMenuItem("compare_drawings");
+                    showApp('drawings');
+                    showStatus('📐 Porovnání výkresů', 'success');
+                    break;
+                case "compare_documents":
+                    tcAPI.ui.setActiveMenuItem("compare_documents");
+                    showApp('documents');
+                    showStatus('📝 Porovnání dokumentů', 'success');
+                    break;
+                default:
+                    console.log('Unknown command:', command);
+            }
+        }
+
+        // Inicializace TC Extension
+        async function initializeTCExtension() {
+            try {
+                console.log('Initializing TC Extension...');
+                
+                // Kontrola, zda je TrimbleConnectWorkspaceAPI dostupný
+                if (typeof TrimbleConnectWorkspaceAPI === 'undefined') {
+                    throw new Error('TrimbleConnectWorkspaceAPI není dostupný. Extension musí být spuštěn uvnitř Trimble Connect.');
+                }
+
+                // Připojení k TC
+                console.log('Connecting to TC API...');
+                tcAPI = await TrimbleConnectWorkspaceAPI.connect(
+                    window.parent,
+                    handleTCEvent,
+                    30000 // 30 second timeout
+                );
+
+                console.log('Connected to TC API successfully!');
+
+                // Nastavení menu
+                const menu = {
+                    title: "PDF Porovnání",
+                    icon: "https://geodetmasna.github.io/pdf-compare/icon.png",
+                    command: "main",
+                    subMenus: [
+                        {
+                            title: "Porovnání výkresů",
+                            icon: "https://geodetmasna.github.io/pdf-compare/icon.png",
+                            command: "compare_drawings"
+                        },
+                        {
+                            title: "Porovnání dokumentů",
+                            icon: "https://geodetmasna.github.io/pdf-compare/icon.png",
+                            command: "compare_documents"
+                        }
+                    ]
+                };
+
+                tcAPI.ui.setMenu(menu);
+                console.log('Menu set successfully');
+
+                // Nastavení výchozí aktivní položky
+                tcAPI.ui.setActiveMenuItem("compare_drawings");
+
+                // Získání project info
+                try {
+                    const project = await tcAPI.project.getProject();
+                    console.log('Project:', project);
+                } catch (e) {
+                    console.warn('Could not get project info:', e);
+                }
+
+                // Zobrazení výchozí aplikace
+                hideLoading();
+                showApp('drawings');
+                showStatus('✓ Připojeno k Trimble Connect', 'success');
+
+            } catch (error) {
+                console.error('Failed to initialize TC Extension:', error);
+                hideLoading();
+                
+                // Zobrazení chyby
+                document.body.innerHTML = `
+                    <div class="error-container">
+                        <h2>❌ Chyba připojení k Trimble Connect</h2>
+                        <p><strong>Chyba:</strong> ${error.message}</p>
+                        <p>Extension musí být spuštěn uvnitř Trimble Connect Web.</p>
+                        <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+                        <h3 style="margin-bottom: 10px;">💡 Alternativní řešení:</h3>
+                        <p>Pokud extension nefunguje, můžete používat standalone verze:</p>
+                        <p>
+                            <strong>Pro výkresy:</strong><br>
+                            <a href="https://geodetmasna.github.io/pdf-compare/vykresy.html" target="_blank" style="color: #0066cc;">
+                                https://geodetmasna.github.io/pdf-compare/vykresy.html
+                            </a>
+                        </p>
+                        <p>
+                            <strong>Pro dokumenty:</strong><br>
+                            <a href="https://geodetmasna.github.io/pdf-compare/dokumenty.html" target="_blank" style="color: #0066cc;">
+                                https://geodetmasna.github.io/pdf-compare/dokumenty.html
+                            </a>
+                        </p>
+                        <p style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px; font-size: 14px;">
+                            <strong>Debug info:</strong><br>
+                            <code>TrimbleConnectWorkspaceAPI: ${typeof TrimbleConnectWorkspaceAPI !== 'undefined' ? 'Dostupný' : 'Nedostupný'}</code><br>
+                            <code>Parent window: ${window.parent !== window ? 'Detekován' : 'Není detekován'}</code>
+                        </p>
+                    </div>
+                `;
+            }
+        }
+
+        // Inicializace při načtení stránky
+        window.addEventListener('load', () => {
+            console.log('Page loaded, initializing...');
+            initializeTCExtension();
+        });
+
+        // Error handling
+        window.addEventListener('error', (e) => {
+            console.error('Global error:', e);
+        });
+    </script>
+</body>
+</html>
