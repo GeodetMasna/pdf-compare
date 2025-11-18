@@ -9,6 +9,52 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50">
+    <!-- Modální okno pro potvrzení/úpravu termínu -->
+    <div id="terminModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">📅 Potvrdit termín příjezdu</h3>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">
+                        Datum příjezdu *
+                    </label>
+                    <input 
+                        type="date"
+                        id="modalDatum"
+                        class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 text-base"
+                    />
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">
+                        Čas příjezdu *
+                    </label>
+                    <input 
+                        type="time"
+                        id="modalCas"
+                        class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 text-base"
+                    />
+                </div>
+                
+                <div class="flex gap-3 mt-6">
+                    <button
+                        onclick="closeTerminModalClick()"
+                        class="flex-1 px-4 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300"
+                    >
+                        Zrušit
+                    </button>
+                    <button
+                        onclick="confirmTerminClick()"
+                        class="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700"
+                    >
+                        ✓ Potvrdit
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <div id="root"></div>
     
     <script type="module">
@@ -68,8 +114,94 @@
             loading: false,
             loginError: null,
             filter: 'all',
-            viewMode: 'cards'
+            viewMode: 'cards',
+            terminModal: {
+                isOpen: false,
+                requestId: null,
+                datum: '',
+                cas: ''
+            }
         };
+
+        function openTerminModal(requestId, pozadovaneDatum, pozadovanyCas) {
+            state.terminModal = {
+                isOpen: true,
+                requestId: requestId,
+                datum: pozadovaneDatum,
+                cas: pozadovanyCas
+            };
+            
+            document.getElementById('terminModal').classList.remove('hidden');
+            document.getElementById('modalDatum').value = pozadovaneDatum;
+            document.getElementById('modalCas').value = pozadovanyCas;
+        }
+
+        function closeTerminModal() {
+            state.terminModal = {
+                isOpen: false,
+                requestId: null,
+                datum: '',
+                cas: ''
+            };
+            document.getElementById('terminModal').classList.add('hidden');
+        }
+
+        async function confirmTermin() {
+            const datum = document.getElementById('modalDatum').value;
+            const cas = document.getElementById('modalCas').value;
+            
+            if (!datum || !cas) {
+                alert('❌ Vyplňte datum i čas!');
+                return;
+            }
+
+            const requestId = state.terminModal.requestId;
+            const request = state.requests.find(r => r.id == requestId);
+            
+            if (!request) {
+                alert('❌ Požadavek nebyl nalezen');
+                return;
+            }
+
+            try {
+                // Aktualizovat termín v Google Sheets
+                const params = new URLSearchParams({
+                    action: 'update',
+                    id: requestId,
+                    schvaleneDatum: datum,
+                    schvalenyCas: cas,
+                    terminPotvrzen: 'Ano'
+                });
+
+                const response = await fetch(`${API_URL}?${params}`);
+                await response.json();
+
+                // Poslat email stavbyvedoucímu
+                await emailjs.send(
+                    EMAIL_CONFIG_GEODET.serviceId,
+                    'template_termin_schvalen', // Nový template
+                    {
+                        to_email: request.email,
+                        to_name: request.jmeno,
+                        objekt_cislo: request.objektCislo,
+                        pozadovane_datum: request.pozadovaneDatum,
+                        pozadovany_cas: request.pozadovanyCas,
+                        schvalene_datum: datum,
+                        schvaleny_cas: cas,
+                        byl_upraven: datum !== request.pozadovaneDatum || cas !== request.pozadovanyCas ? 'Ano' : 'Ne',
+                        poznamka: request.poznamka
+                    }
+                );
+
+                alert('✅ Termín byl potvrzen a email odeslán stavbyvedoucímu!');
+                
+                closeTerminModal();
+                await loadRequests();
+            } catch (error) {
+                console.error('Chyba při potvrzování termínu:', error);
+                alert('❌ Nepodařilo se potvrdit termín. Zkuste to znovu.');
+            }
+        }
 
         function getDriveFileUrl(fileId) {
             if (!fileId) return null;
@@ -531,12 +663,29 @@
                                                     </td>
                                                 </tr>
                                                 ${req.pozadovaneDatum && req.pozadovanyCas ? `
-                                                    <tr class="${req.potvrzenoGeodet === 'Ano' ? 'bg-green-50' : 'bg-orange-50'}">
+                                                    <tr class="${req.terminPotvrzen === 'Ano' ? 'bg-green-50' : 'bg-orange-50'}">
                                                         <td colspan="7" class="px-4 py-2 text-sm">
-                                                            <strong class="${req.potvrzenoGeodet === 'Ano' ? 'text-green-800' : 'text-orange-800'}">📅 Požadovaný termín:</strong>
-                                                            <span class="text-gray-700">${req.pozadovaneDatum} v ${req.pozadovanyCas}</span>
-                                                            ${req.potvrzenoGeodet === 'Ano' ? `
-                                                                <span class="mx-2 text-green-700 font-bold">✓ Geodet potvrdil</span>
+                                                            <strong class="${req.terminPotvrzen === 'Ano' ? 'text-green-800' : 'text-orange-800'}">
+                                                                📅 ${req.terminPotvrzen === 'Ano' ? 'Schválený termín' : 'Požadovaný termín'}:
+                                                            </strong>
+                                                            <span class="text-gray-700">
+                                                                ${req.terminPotvrzen === 'Ano' && req.schvaleneDatum ? 
+                                                                    `${req.schvaleneDatum} v ${req.schvalenyCas}` : 
+                                                                    `${req.pozadovaneDatum} v ${req.pozadovanyCas}`
+                                                                }
+                                                            </span>
+                                                            ${req.terminPotvrzen === 'Ano' ? `
+                                                                <span class="mx-2 text-green-700 font-bold">✓ Potvrzen</span>
+                                                                ${req.schvaleneDatum !== req.pozadovaneDatum || req.schvalenyCas !== req.pozadovanyCas ? `
+                                                                    <span class="text-xs text-gray-600">(Původní: ${req.pozadovaneDatum} v ${req.pozadovanyCas})</span>
+                                                                ` : ''}
+                                                            ` : req.stav === 'Nový' ? `
+                                                                <button
+                                                                    onclick="openTerminModalClick('${req.id}', '${req.pozadovaneDatum}', '${req.pozadovanyCas}')"
+                                                                    class="ml-2 px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded text-xs"
+                                                                >
+                                                                    ✓ Potvrdit/upravit
+                                                                </button>
                                                             ` : `
                                                                 <span class="mx-2 text-orange-700 font-bold">⏳ Čeká na potvrzení</span>
                                                             `}
@@ -587,17 +736,30 @@
                                                     </p>
                                                     
                                                     ${req.pozadovaneDatum && req.pozadovanyCas ? `
-                                                        <div class="mt-2 p-3 ${req.potvrzenoGeodet === 'Ano' ? 'bg-green-50 border-l-4 border-green-500' : 'bg-orange-50 border-l-4 border-orange-500'} rounded">
-                                                            <p class="text-sm font-semibold ${req.potvrzenoGeodet === 'Ano' ? 'text-green-800' : 'text-orange-800'} mb-1">
-                                                                📅 Požadovaný termín příjezdu:
+                                                        <div class="mt-2 p-3 ${req.terminPotvrzen === 'Ano' ? 'bg-green-50 border-l-4 border-green-500' : 'bg-orange-50 border-l-4 border-orange-500'} rounded">
+                                                            <p class="text-sm font-semibold ${req.terminPotvrzen === 'Ano' ? 'text-green-800' : 'text-orange-800'} mb-1">
+                                                                📅 ${req.terminPotvrzen === 'Ano' ? 'Schválený termín' : 'Požadovaný termín od stavbyvedoucího'}:
                                                             </p>
-                                                            <p class="text-sm ${req.potvrzenoGeodet === 'Ano' ? 'text-green-700' : 'text-orange-700'}">
-                                                                ${req.pozadovaneDatum} v ${req.pozadovanyCas}
+                                                            <p class="text-sm ${req.terminPotvrzen === 'Ano' ? 'text-green-700' : 'text-orange-700'}">
+                                                                ${req.terminPotvrzen === 'Ano' && req.schvaleneDatum ? 
+                                                                    `${req.schvaleneDatum} v ${req.schvalenyCas}` : 
+                                                                    `${req.pozadovaneDatum} v ${req.pozadovanyCas}`
+                                                                }
                                                             </p>
-                                                            ${req.potvrzenoGeodet === 'Ano' ? `
-                                                                <p class="text-xs text-green-600 font-bold mt-1">✓ Geodet potvrdil termín</p>
+                                                            ${req.terminPotvrzen === 'Ano' ? `
+                                                                <p class="text-xs text-green-600 font-bold mt-1">✓ Termín potvrzen</p>
+                                                                ${req.schvaleneDatum !== req.pozadovaneDatum || req.schvalenyCas !== req.pozadovanyCas ? `
+                                                                    <p class="text-xs text-gray-600 mt-1">Původní požadavek: ${req.pozadovaneDatum} v ${req.pozadovanyCas}</p>
+                                                                ` : ''}
+                                                            ` : req.stav === 'Nový' ? `
+                                                                <button
+                                                                    onclick="openTerminModalClick('${req.id}', '${req.pozadovaneDatum}', '${req.pozadovanyCas}')"
+                                                                    class="mt-2 w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg transition-all"
+                                                                >
+                                                                    ✓ Potvrdit / upravit termín
+                                                                </button>
                                                             ` : `
-                                                                <p class="text-xs text-orange-600 font-bold mt-1">⏳ Čeká na potvrzení geodeta</p>
+                                                                <p class="text-xs text-orange-600 font-bold mt-1">⏳ Čeká na potvrzení termínu</p>
                                                             `}
                                                         </div>
                                                     ` : ''}
@@ -690,6 +852,9 @@
             window.assignClick = assignGeodet;
             window.filterClick = setFilter;
             window.viewModeClick = setViewMode;
+            window.openTerminModalClick = openTerminModal;
+            window.closeTerminModalClick = closeTerminModal;
+            window.confirmTerminClick = confirmTermin;
         }
 
         render();
